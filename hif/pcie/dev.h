@@ -759,6 +759,7 @@ static inline void pcie_rx_prepare_status(struct mwl_priv *priv, u16 format,
 	switch (format) {
 	case RX_RATE_INFO_FORMAT_11N:
 		status->encoding = RX_ENC_HT;
+		status->bw = RATE_INFO_BW_20;
 		if (bw == RX_RATE_INFO_HT40)
 			status->bw = RATE_INFO_BW_40;
 		if (gi == RX_RATE_INFO_SHORT_INTERVAL)
@@ -766,6 +767,7 @@ static inline void pcie_rx_prepare_status(struct mwl_priv *priv, u16 format,
 		break;
 	case RX_RATE_INFO_FORMAT_11AC:
 		status->encoding = RX_ENC_VHT;
+		status->bw = RATE_INFO_BW_20;
 		if (bw == RX_RATE_INFO_HT40)
 			status->bw = RATE_INFO_BW_40;
 		if (bw == RX_RATE_INFO_HT80)
