@@ -251,18 +251,23 @@ static int mwl_mac80211_config(struct ieee80211_hw *hw,
 		goto out;
 
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
-		int rate = 0;
+		int mgmt_rate = 0;
+		int mcast_rate = 0;
 
 		if (conf->chandef.chan->band == NL80211_BAND_2GHZ) {
 			mwl_fwcmd_set_apmode(hw, AP_MODE_2_4GHZ_11AC_MIXED);
 			mwl_fwcmd_set_linkadapt_cs_mode(hw,
 							LINK_CS_STATE_CONSERV);
-			rate = mwl_rates_24[0].hw_value;
+			mgmt_rate = mwl_rates_24[0].hw_value;
+			/* multicast rate: 54Mbps */
+			mcast_rate = mwl_rates_24[sizeof(mwl_rates_24)/sizeof(struct ieee80211_rate)].hw_value;
 		} else if (conf->chandef.chan->band == NL80211_BAND_5GHZ) {
 			mwl_fwcmd_set_apmode(hw, AP_MODE_11AC);
 			mwl_fwcmd_set_linkadapt_cs_mode(hw,
 							LINK_CS_STATE_AUTO);
-			rate = mwl_rates_50[0].hw_value;
+			mgmt_rate = mwl_rates_50[0].hw_value;
+			/* multicast rate: 54Mbps */
+			mcast_rate = mwl_rates_50[sizeof(mwl_rates_50)/sizeof(struct ieee80211_rate)].hw_value;
 
 			if (conf->radar_enabled)
 				mwl_fwcmd_set_radar_detect(hw, MONITOR_START);
@@ -274,7 +279,7 @@ static int mwl_mac80211_config(struct ieee80211_hw *hw,
 		rc = mwl_fwcmd_set_rf_channel(hw, conf);
 		if (rc)
 			goto out;
-		rc = mwl_fwcmd_use_fixed_rate(hw, rate, rate);
+		rc = mwl_fwcmd_use_fixed_rate(hw, mcast_rate, mgmt_rate);
 		if (rc)
 			goto out;
 		rc = mwl_fwcmd_max_tx_power(hw, conf, 0);
@@ -316,7 +321,7 @@ static void mwl_mac80211_bss_info_changed_ap(struct ieee80211_hw *hw,
 
 	if (changed & BSS_CHANGED_BASIC_RATES) {
 		int idx;
-		int rate;
+		int mgmt_rate, mcast_rate;
 
 		/* Use lowest supported basic rate for multicasts
 		 * and management frames (such as probe responses --
@@ -326,12 +331,17 @@ static void mwl_mac80211_bss_info_changed_ap(struct ieee80211_hw *hw,
 		if (idx)
 			idx--;
 
-		if (hw->conf.chandef.chan->band == NL80211_BAND_2GHZ)
-			rate = mwl_rates_24[idx].hw_value;
-		else
-			rate = mwl_rates_50[idx].hw_value;
+		if (hw->conf.chandef.chan->band == NL80211_BAND_2GHZ) {
+			mgmt_rate = mwl_rates_24[idx].hw_value;
+			/* multicast rate: 54Mbps */
+			mcast_rate = mwl_rates_24[sizeof(mwl_rates_24)/sizeof(struct ieee80211_rate)].hw_value;
+		} else {
+			mgmt_rate = mwl_rates_50[idx].hw_value;
+			/* multicast rate: 54Mbps */
+			mcast_rate = mwl_rates_50[sizeof(mwl_rates_50)/sizeof(struct ieee80211_rate)].hw_value;
+		}
 
-		mwl_fwcmd_use_fixed_rate(hw, rate, rate);
+		mwl_fwcmd_use_fixed_rate(hw, mcast_rate, mgmt_rate);
 	}
 
 	if (changed & (BSS_CHANGED_BEACON_INT | BSS_CHANGED_BEACON)) {
