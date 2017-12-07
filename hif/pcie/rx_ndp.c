@@ -255,13 +255,36 @@ static inline void pcie_rx_process_fast_data(struct mwl_priv *priv,
 		ether_addr_copy(hdr.addr3, skb->data);
 		hdrlen = 24;
 		break;
+	case NL80211_IFTYPE_AP_VLAN:
+		if (!sta_info->wds)
+			goto drop_packet;
+		fc |= (cpu_to_le16(IEEE80211_FCTL_TODS) |
+			cpu_to_le16(IEEE80211_FCTL_FROMDS));
+		/* RA TA DA SA */
+		ether_addr_copy(hdr.addr1, mwl_vif->bssid);
+		ether_addr_copy(hdr.addr2, sta->addr);
+		ether_addr_copy(hdr.addr3, skb->data);
+		ether_addr_copy(hdr.addr4, skb->data + ETH_ALEN);
+		hdrlen = 30;
+		break;
 	case NL80211_IFTYPE_STATION:
-		fc |= cpu_to_le16(IEEE80211_FCTL_FROMDS);
-		/* DA BSSID SA */
-		ether_addr_copy(hdr.addr1, skb->data);
-		ether_addr_copy(hdr.addr2, mwl_vif->bssid);
-		ether_addr_copy(hdr.addr3, skb->data + ETH_ALEN);
-		hdrlen = 24;
+		if (sta_info->wds) {
+			fc |= (cpu_to_le16(IEEE80211_FCTL_TODS) |
+				cpu_to_le16(IEEE80211_FCTL_FROMDS));
+			/* RA TA DA SA */
+			ether_addr_copy(hdr.addr1, mwl_vif->sta_mac);
+			ether_addr_copy(hdr.addr2, mwl_vif->bssid);
+			ether_addr_copy(hdr.addr3, skb->data);
+			ether_addr_copy(hdr.addr4, skb->data + ETH_ALEN);
+			hdrlen = 30;
+		} else {
+			fc |= cpu_to_le16(IEEE80211_FCTL_FROMDS);
+			/* DA BSSID SA */
+			ether_addr_copy(hdr.addr1, skb->data);
+			ether_addr_copy(hdr.addr2, mwl_vif->bssid);
+			ether_addr_copy(hdr.addr3, skb->data + ETH_ALEN);
+			hdrlen = 24;
+		}
 		break;
 	default:
 		goto drop_packet;
@@ -493,9 +516,9 @@ void pcie_rx_recv_ndp(unsigned long data)
 		case RXRING_CASE_DROP:
 		case RXRING_CASE_SLOW_BAD_PN:
 			if (ctrl_case == RXRING_CASE_SLOW_DEL_DONE) {
-				wiphy_info(hw->wiphy,
-					   "staid %d deleted\n",
-					   stnid);
+				wiphy_debug(hw->wiphy,
+					    "staid %d deleted\n",
+					    stnid);
 				utils_free_stnid(priv, stnid);
 			}
 			dev_kfree_skb_any(psk_buff);
