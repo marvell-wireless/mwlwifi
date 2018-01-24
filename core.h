@@ -251,6 +251,10 @@ struct mwl_priv {
 
 	struct work_struct account_handle;
 
+	bool wds_check;
+	struct work_struct wds_check_handle;
+	u8 wds_check_sta[ETH_ALEN];
+
 	bool csa_active;
 	struct work_struct chnl_switch_handle;
 	enum nl80211_dfs_regions dfs_region;
@@ -270,6 +274,7 @@ struct mwl_priv {
 	u32 reg_offset;
 	u32 reg_value;
 	int sta_aid;
+	bool coredump_text;
 };
 
 struct beacon_info {
