@@ -227,6 +227,8 @@ int mwl_fwcmd_set_fw_flush_timer(struct ieee80211_hw *hw, u32 value);
 
 int mwl_fwcmd_set_cdd(struct ieee80211_hw *hw);
 
+int mwl_fwcmd_set_bftype(struct ieee80211_hw *hw, int mode);
+
 int mwl_fwcmd_reg_cau(struct ieee80211_hw *hw, u8 flag, u32 reg, u32 *val);
 
 int mwl_fwcmd_get_temp(struct ieee80211_hw *hw, u32 *temp);
@@ -239,6 +241,9 @@ int mwl_fwcmd_get_device_pwr_tbl(struct ieee80211_hw *hw,
 				 u8 *region_code,
 				 u8 *number_of_channels,
 				 u32 channel_index);
+
+int mwl_fwcmd_set_rate_drop(struct ieee80211_hw *hw, int enable,
+			    int value, int staid);
 
 int mwl_fwcmd_newdp_dmathread_start(struct ieee80211_hw *hw);
 

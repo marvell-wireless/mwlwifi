@@ -511,6 +511,7 @@ void pcie_tx_xmit_ndp(struct ieee80211_hw *hw,
 	struct ieee80211_sta *sta;
 	struct mwl_sta *sta_info;
 	struct ieee80211_hdr *wh;
+	u8 *da;
 	u16 qos;
 	u8 tid = 0;
 	struct mwl_ampdu_stream *stream = NULL;
@@ -518,6 +519,7 @@ void pcie_tx_xmit_ndp(struct ieee80211_hw *hw,
 	bool mgmtframe = false;
 	struct ieee80211_mgmt *mgmt;
 	bool eapol_frame = false;
+	bool start_ba_session = false;
 	struct pcie_tx_ctrl_ndp *tx_ctrl;
 
 	tx_info = IEEE80211_SKB_CB(skb);
@@ -602,6 +604,7 @@ void pcie_tx_xmit_ndp(struct ieee80211_hw *hw,
 		tid = qos & 0x7;
 		if (sta && sta->ht_cap.ht_supported && !eapol_frame &&
 		    qos != 0xFFFF) {
+			pcie_tx_count_packet(sta, tid);
 			spin_lock_bh(&priv->stream_lock);
 			stream = mwl_fwcmd_lookup_stream(hw, sta, tid);
 			if (!stream ||
@@ -613,27 +616,23 @@ void pcie_tx_xmit_ndp(struct ieee80211_hw *hw,
 				return;
 			}
 			if ((stream->state == AMPDU_NO_STREAM) &&
-			    sta_info->is_ampdu_allowed) {
+			    mwl_fwcmd_ampdu_allowed(sta, tid)) {
 				stream = mwl_fwcmd_add_stream(hw, sta, tid);
-				if (stream) {
-					if (mwl_fwcmd_start_stream(hw, stream))
-						mwl_fwcmd_remove_stream(hw,
-									stream);
-				}
+				if (stream)
+					start_ba_session = true;
 			}
 			spin_unlock_bh(&priv->stream_lock);
 		}
 
-		if (is_multicast_ether_addr(ieee80211_get_DA(wh))
+		da = ieee80211_get_DA(wh);
+
+		if (is_multicast_ether_addr(da)
 		    && (mwl_vif->macid != SYSADPT_NUM_OF_AP)) {
-			u8 dhcp_op;
-			u8 client[ETH_ALEN];
 
 			tx_que_priority = mwl_vif->macid * SYSADPT_MAX_TID;
 
-			if (utils_is_dhcp(skb->data, true, &dhcp_op, client))
-				if (dhcp_op == DHCPOFFER)
-					tx_que_priority += 7;
+			if (da[ETH_ALEN - 1] == 0xff)
+				tx_que_priority += 7;
 
 			if (ieee80211_has_a4(wh->frame_control)) {
 				if (sta && sta_info->wds)
@@ -682,5 +681,13 @@ void pcie_tx_xmit_ndp(struct ieee80211_hw *hw,
 	if (!pcie_priv->is_tx_schedule) {
 		tasklet_schedule(&pcie_priv->tx_task);
 		pcie_priv->is_tx_schedule = true;
+	}
+
+	/* Initiate the ampdu session here */
+	if (start_ba_session) {
+		spin_lock_bh(&priv->stream_lock);
+		if (mwl_fwcmd_start_stream(hw, stream))
+			mwl_fwcmd_remove_stream(hw, stream);
+		spin_unlock_bh(&priv->stream_lock);
 	}
 }

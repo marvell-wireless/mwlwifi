@@ -614,6 +614,30 @@ struct acnt_rx_s { /* Accounting Record for Rx PPDU */
 	struct rx_info rx_info;/* Receive parameters from 1st valid MPDU/AMPDU*/
 } __packed;
 
+struct acnt_ra_s { /* Accounting Record w/ rateinfo PER */
+	__le16 code;          /* Unique code for each type                    */
+	u8 len;               /* Length in DWORDS, including header           */
+	u8 per;               /* PER for this rateinfo                        */
+	__le32 tsf;           /* Timestamp for Entry (when len>1)             */
+	__le16 stn_id;        /* sta index this rateinfo is tied to           */
+	u8 type;              /* SU:0 or MU:1                                 */
+	u8 rate_tbl_index;    /* ratetbl index                                */
+	__le32 rate_info;     /* rateinfo for this ratetbl index              */
+	__le32 tx_attempt_cnt;/* Total tx pkt during rate adapt interval      */
+} __packed;
+
+struct acnt_ba_s { /* Accounting Record w/ rateinfo PER */
+	__le16 code;          /* Unique code for each type                    */
+	u8 len;               /* Length in DWORDS, including header           */
+	u8 ba_hole;           /* Total missing pkt in a BA                    */
+	__le32 tsf;           /* Timestamp for Entry (when len>1)             */
+	__le16 stnid;         /* sta index for this BA                        */
+	u8 no_ba;             /* No BA received                               */
+	u8 ba_expected;       /* Total expected pkt to be BA'd                */
+	u8 type;              /* SU:0 or MU:1                                 */
+	u8 pad[3];            /* Unused                                       */
+} __packed;
+
 static inline void pcie_tx_add_dma_header(struct mwl_priv *priv,
 					 struct sk_buff *skb,
 					 int head_pad,
@@ -748,6 +772,33 @@ static inline void pcie_tx_prepare_info(struct mwl_priv *priv, u32 rate,
 				IEEE80211_TX_RC_SHORT_GI;
 		info->status.rates[0].count = 1;
 		info->status.rates[1].idx = -1;
+	}
+}
+
+static inline void pcie_tx_count_packet(struct ieee80211_sta *sta, u8 tid)
+{
+	struct mwl_sta *sta_info;
+	struct mwl_tx_info *tx_stats;
+
+	if (WARN_ON(tid >= SYSADPT_MAX_TID))
+		return;
+
+	sta_info = mwl_dev_get_sta(sta);
+
+	tx_stats = &sta_info->tx_stats[tid];
+
+	if (tx_stats->start_time == 0)
+		tx_stats->start_time = jiffies;
+
+	/* reset the packet count after each second elapses.  If the number of
+	 * packets ever exceeds the ampdu_min_traffic threshold, we will allow
+	 * an ampdu stream to be started.
+	 */
+	if (jiffies - tx_stats->start_time > HZ) {
+		tx_stats->pkts = 0;
+		tx_stats->start_time = jiffies;
+	} else {
+		tx_stats->pkts++;
 	}
 }
 

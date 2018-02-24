@@ -83,10 +83,12 @@ char *mwl_fwcmd_get_cmd_string(unsigned short cmd)
 		{ HOSTCMD_CMD_DWDS_ENABLE, "DwdsEnable" },
 		{ HOSTCMD_CMD_FW_FLUSH_TIMER, "FwFlushTimer" },
 		{ HOSTCMD_CMD_SET_CDD, "SetCDD" },
+		{ HOSTCMD_CMD_SET_BFTYPE, "SetBFType" },
 		{ HOSTCMD_CMD_CAU_REG_ACCESS, "CAURegAccess" },
 		{ HOSTCMD_CMD_GET_TEMP, "GetTemp" },
 		{ HOSTCMD_CMD_GET_FW_REGION_CODE, "GetFwRegionCode" },
 		{ HOSTCMD_CMD_GET_DEVICE_PWR_TBL, "GetDevicePwrTbl" },
+		{ HOSTCMD_CMD_SET_RATE_DROP, "SetRateDrop" },
 		{ HOSTCMD_CMD_NEWDP_DMATHREAD_START, "NewdpDMAThreadStart" },
 		{ HOSTCMD_CMD_GET_FW_REGION_CODE_SC4, "GetFwRegionCodeSC4" },
 		{ HOSTCMD_CMD_GET_DEVICE_PWR_TBL_SC4, "GetDevicePwrTblSC4" },
@@ -2934,6 +2936,31 @@ int mwl_fwcmd_set_cdd(struct ieee80211_hw *hw)
 	return 0;
 }
 
+int mwl_fwcmd_set_bftype(struct ieee80211_hw *hw, int mode)
+{
+	struct mwl_priv *priv = hw->priv;
+	struct hostcmd_cmd_set_bftype *pcmd;
+
+	pcmd = (struct hostcmd_cmd_set_bftype *)&priv->pcmd_buf[0];
+
+	mutex_lock(&priv->fwcmd_mutex);
+
+	memset(pcmd, 0x00, sizeof(*pcmd));
+	pcmd->cmd_hdr.cmd = cpu_to_le16(HOSTCMD_CMD_SET_BFTYPE);
+	pcmd->cmd_hdr.len = cpu_to_le16(sizeof(*pcmd));
+	pcmd->action = cpu_to_le32(WL_SET);
+	pcmd->mode = cpu_to_le32(mode);
+
+	if (mwl_hif_exec_cmd(priv->hw, HOSTCMD_CMD_SET_BFTYPE)) {
+		mutex_unlock(&priv->fwcmd_mutex);
+		return -EIO;
+	}
+
+	mutex_unlock(&priv->fwcmd_mutex);
+
+	return 0;
+}
+
 int mwl_fwcmd_reg_cau(struct ieee80211_hw *hw, u8 flag, u32 reg, u32 *val)
 {
 	struct mwl_priv *priv = hw->priv;
@@ -3064,6 +3091,33 @@ int mwl_fwcmd_get_device_pwr_tbl(struct ieee80211_hw *hw,
 	mutex_unlock(&priv->fwcmd_mutex);
 
 	return status;
+}
+
+int mwl_fwcmd_set_rate_drop(struct ieee80211_hw *hw, int enable,
+			    int value, int staid)
+{
+	struct mwl_priv *priv = hw->priv;
+	struct hostcmd_cmd_set_rate_drop *pcmd;
+
+	pcmd = (struct hostcmd_cmd_set_rate_drop *)&priv->pcmd_buf[0];
+
+	mutex_lock(&priv->fwcmd_mutex);
+
+	memset(pcmd, 0x00, sizeof(*pcmd));
+	pcmd->cmd_hdr.cmd = cpu_to_le16(HOSTCMD_CMD_SET_RATE_DROP);
+	pcmd->cmd_hdr.len = cpu_to_le16(sizeof(*pcmd));
+	pcmd->enable = cpu_to_le32(enable);
+	pcmd->rate_index = cpu_to_le32(value);
+	pcmd->sta_index = cpu_to_le32(staid);
+
+	if (mwl_hif_exec_cmd(priv->hw, HOSTCMD_CMD_SET_RATE_DROP)) {
+		mutex_unlock(&priv->fwcmd_mutex);
+		return -EIO;
+	}
+
+	mutex_unlock(&priv->fwcmd_mutex);
+
+	return 0;
 }
 
 int mwl_fwcmd_newdp_dmathread_start(struct ieee80211_hw *hw)

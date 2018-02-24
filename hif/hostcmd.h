@@ -63,10 +63,12 @@
 #define HOSTCMD_CMD_DWDS_ENABLE                 0x1144
 #define HOSTCMD_CMD_FW_FLUSH_TIMER              0x1148
 #define HOSTCMD_CMD_SET_CDD                     0x1150
+#define HOSTCMD_CMD_SET_BFTYPE                  0x1155
 #define HOSTCMD_CMD_CAU_REG_ACCESS              0x1157
 #define HOSTCMD_CMD_GET_TEMP                    0x1159
 #define HOSTCMD_CMD_GET_FW_REGION_CODE          0x116A
 #define HOSTCMD_CMD_GET_DEVICE_PWR_TBL          0x116B
+#define HOSTCMD_CMD_SET_RATE_DROP               0x1172
 #define HOSTCMD_CMD_NEWDP_DMATHREAD_START       0x1189
 #define HOSTCMD_CMD_GET_FW_REGION_CODE_SC4      0x118A
 #define HOSTCMD_CMD_GET_DEVICE_PWR_TBL_SC4      0x118B
@@ -976,6 +978,13 @@ struct hostcmd_cmd_set_cdd {
 	__le32 enable;
 } __packed;
 
+/* HOSTCMD_CMD_SET_BFTYPE */
+struct hostcmd_cmd_set_bftype {
+	struct hostcmd_header cmd_hdr;
+	__le32 action;
+	__le32 mode;
+} __packed;
+
 /* HOSTCMD_CMD_GET_TEMP */
 struct hostcmd_cmd_get_temp {
 	struct hostcmd_header cmd_hdr;
@@ -1009,6 +1018,14 @@ struct hostcmd_cmd_get_device_pwr_tbl {
 	__le32 current_channel_index;
 	/* Only for 1 channel, so, 1 channel at a time */
 	struct channel_power_tbl channel_pwr_tbl;
+} __packed;
+
+/* HOSTCMD_CMD_SET_RATE_DROP */
+struct hostcmd_cmd_set_rate_drop {
+	struct hostcmd_header cmd_hdr;
+	__le32 enable;
+	__le32 rate_index;
+	__le32 sta_index;
 } __packed;
 
 /* HOSTCMD_CMD_NEWDP_DMATHREAD_START */
