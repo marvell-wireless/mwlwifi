@@ -776,28 +776,6 @@ static inline void pcie_tx_prepare_info(struct mwl_priv *priv, u32 rate,
 	}
 }
 
-static inline int mwl_tx_tid_queue_mapping(u8 tid)
-{
-	switch (tid) {
-	case 0:
-	case 3:
-		return IEEE80211_AC_BE;
-	case 1:
-	case 2:
-		return IEEE80211_AC_BK;
-	case 4:
-	case 5:
-		return IEEE80211_AC_VI;
-	case 6:
-	case 7:
-		return IEEE80211_AC_VO;
-	default:
-		break;
-	}
-
-	return -1;
-}
-
 static inline void pcie_tx_count_packet(struct ieee80211_sta *sta, u8 tid)
 {
 	struct mwl_sta *sta_info;

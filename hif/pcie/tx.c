@@ -918,7 +918,7 @@ void pcie_tx_xmit(struct ieee80211_hw *hw,
 			}
 		} else {
 #ifdef SWBA_SUPPORT
-			if (mwl_tx_tid_queue_mapping(tid) !=
+			if (utils_tid_to_ac(tid) !=
 			    IEEE80211_AC_VO) {
 #endif
 			if (mwl_fwcmd_ampdu_allowed(sta, tid)) {
