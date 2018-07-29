@@ -34,6 +34,7 @@
 #define ANTENNA_RX_1                  1
 #define ANTENNA_RX_2                  2
 #define ANTENNA_RX_3                  3
+#define ANTENNA_RX_MAX                4
 
 /* band related constants */
 #define BAND_24_CHANNEL_NUM           14
@@ -110,6 +111,11 @@
 #define SU_MIMO                       0
 #define MU_MIMO                       1
 #define SU_MU_TYPE_CNT                2 /* traffic type, SU and MU */
+
+/* BF operation mode */
+#define TXBF_MODE_OFF                 0x05
+#define TXBF_MODE_AUTO                0x06
+#define TXBF_MODE_BFMER_AUTO          0x07
 
 static const u8 TX_HISTO_PER_THRES[TX_RATE_HISTO_PER_CNT - 1] = {6, 12, 20, 30};
 
@@ -298,6 +304,8 @@ struct mwl_priv {
 	u16 dfs_pw_filter;
 	u16 dfs_min_num_radar;
 	u16 dfs_min_pri_count;
+
+	u8 bf_type;
 
 	struct thermal_cooling_device *cdev;
 	u32 throttle_state;

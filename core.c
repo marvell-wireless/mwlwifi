@@ -19,6 +19,7 @@
 
 #include "sysadpt.h"
 #include "core.h"
+#include "vendor_cmd.h"
 #include "thermal.h"
 #include "debugfs.h"
 #include "hif/fwcmd.h"
@@ -100,7 +101,9 @@ static const struct ieee80211_rate mwl_rates_50[] = {
 
 static const struct ieee80211_iface_limit ap_if_limits[] = {
 	{ .max = SYSADPT_NUM_OF_AP, .types = BIT(NL80211_IFTYPE_AP) },
+#if defined(CPTCFG_MAC80211_MESH) || defined(CONFIG_MAC80211_MESH)
 	{ .max = SYSADPT_NUM_OF_MESH, .types = BIT(NL80211_IFTYPE_MESH_POINT) },
+#endif
 	{ .max = SYSADPT_NUM_OF_CLIENT, .types = BIT(NL80211_IFTYPE_STATION) },
 };
 
@@ -417,6 +420,8 @@ static void mwl_set_ht_caps(struct mwl_priv *priv,
 			    struct ieee80211_supported_band *band)
 {
 	struct ieee80211_hw *hw;
+	const u8 ant_rx_no[ANTENNA_RX_MAX] = { 3, 1, 2, 3};
+	int i;
 
 	hw = priv->hw;
 
@@ -441,11 +446,8 @@ static void mwl_set_ht_caps(struct mwl_priv *priv,
 	band->ht_cap.ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
 	band->ht_cap.ampdu_density = IEEE80211_HT_MPDU_DENSITY_4;
 
-	band->ht_cap.mcs.rx_mask[0] = 0xff;
-	if (priv->antenna_rx == ANTENNA_RX_2)
-		band->ht_cap.mcs.rx_mask[1] = 0xff;
-	if (priv->antenna_rx == ANTENNA_RX_4_AUTO)
-		band->ht_cap.mcs.rx_mask[2] = 0xff;
+	for (i = 0; i < ant_rx_no[priv->antenna_rx]; i++)
+		band->ht_cap.mcs.rx_mask[i] = 0xff;
 	band->ht_cap.mcs.rx_mask[4] = 0x01;
 
 	band->ht_cap.mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
@@ -467,9 +469,15 @@ static void mwl_set_vht_caps(struct mwl_priv *priv,
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_RXLDPC;
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_SHORT_GI_80;
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_RXSTBC_1;
-	if (priv->antenna_tx != ANTENNA_TX_1)
+	if (priv->antenna_tx != ANTENNA_TX_1) {
 		band->vht_cap.cap |= IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE;
+		if (priv->chip_type == MWL8964)
+			band->vht_cap.cap |=
+				IEEE80211_VHT_CAP_MU_BEAMFORMER_CAPABLE;
+	}
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE;
+	if (priv->chip_type == MWL8964)
+		band->vht_cap.cap |= IEEE80211_VHT_CAP_MU_BEAMFORMEE_CAPABLE;
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK;
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_RX_ANTENNA_PATTERN;
 	band->vht_cap.cap |= IEEE80211_VHT_CAP_TX_ANTENNA_PATTERN;
@@ -747,6 +755,7 @@ static int mwl_wl_init(struct mwl_priv *priv)
 	priv->dfs_pw_filter = 0;
 	priv->dfs_min_num_radar = 5;
 	priv->dfs_min_pri_count = 4;
+	priv->bf_type = TXBF_MODE_AUTO;
 
 	/* Handle watchdog ba events */
 	INIT_WORK(&priv->watchdog_ba_handle, mwl_watchdog_ba_events);
@@ -828,12 +837,16 @@ static int mwl_wl_init(struct mwl_priv *priv)
 
 	hw->wiphy->interface_modes = 0;
 	hw->wiphy->interface_modes |= BIT(NL80211_IFTYPE_AP);
+#if defined(CPTCFG_MAC80211_MESH) || defined(CONFIG_MAC80211_MESH)
 	hw->wiphy->interface_modes |= BIT(NL80211_IFTYPE_MESH_POINT);
+#endif
 	hw->wiphy->interface_modes |= BIT(NL80211_IFTYPE_STATION);
 	hw->wiphy->iface_combinations = &ap_if_comb;
 	hw->wiphy->n_iface_combinations = 1;
 
 	mwl_set_caps(priv);
+
+	vendor_cmd_register(hw->wiphy);
 
 	rc = ieee80211_register_hw(hw);
 	if (rc) {
