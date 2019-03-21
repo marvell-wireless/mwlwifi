@@ -89,6 +89,7 @@ char *mwl_fwcmd_get_cmd_string(unsigned short cmd)
 		{ HOSTCMD_CMD_SET_BFTYPE, "SetBFType" },
 		{ HOSTCMD_CMD_CAU_REG_ACCESS, "CAURegAccess" },
 		{ HOSTCMD_CMD_GET_TEMP, "GetTemp" },
+		{ HOSTCMD_CMD_LED_CTRL, "LedCtrl" },
 		{ HOSTCMD_CMD_GET_FW_REGION_CODE, "GetFwRegionCode" },
 		{ HOSTCMD_CMD_GET_DEVICE_PWR_TBL, "GetDevicePwrTbl" },
 		{ HOSTCMD_CMD_SET_RATE_DROP, "SetRateDrop" },
@@ -97,8 +98,8 @@ char *mwl_fwcmd_get_cmd_string(unsigned short cmd)
 		{ HOSTCMD_CMD_GET_DEVICE_PWR_TBL_SC4, "GetDevicePwrTblSC4" },
 		{ HOSTCMD_CMD_QUIET_MODE, "QuietMode" },
 		{ HOSTCMD_CMD_CORE_DUMP_DIAG_MODE, "CoreDumpDiagMode" },
-		{ HOSTCMD_CMD_GET_FW_CORE_DUMP, "GetFwCoreDump" },
 		{ HOSTCMD_CMD_802_11_SLOT_TIME, "80211SlotTime" },
+		{ HOSTCMD_CMD_GET_FW_CORE_DUMP, "GetFwCoreDump" },
 		{ HOSTCMD_CMD_EDMAC_CTRL, "EDMACCtrl" },
 		{ HOSTCMD_CMD_TXPWRLMT_CFG, "TxpwrlmtCfg" },
 		{ HOSTCMD_CMD_MCAST_CTS, "McastCts" },
@@ -664,6 +665,8 @@ static int mwl_fwcmd_set_ap_beacon(struct mwl_priv *priv,
 
 	ether_addr_copy(pcmd->start_cmd.sta_mac_addr, mwl_vif->bssid);
 	memcpy(pcmd->start_cmd.ssid, bss_conf->ssid, bss_conf->ssid_len);
+	if (priv->chip_type == MWL8997)
+		ether_addr_copy(pcmd->start_cmd.bssid, mwl_vif->bssid);
 	pcmd->start_cmd.bss_type = 1;
 	pcmd->start_cmd.bcn_period  = cpu_to_le16(bss_conf->beacon_int);
 	pcmd->start_cmd.dtim_period = bss_conf->dtim_period; /* 8bit */
@@ -1464,6 +1467,8 @@ int mwl_fwcmd_broadcast_ssid_enable(struct ieee80211_hw *hw,
 	pcmd->cmd_hdr.len = cpu_to_le16(sizeof(*pcmd));
 	pcmd->cmd_hdr.macid = mwl_vif->macid;
 	pcmd->enable = cpu_to_le32(enable);
+	if (priv->chip_type == MWL8997)
+		pcmd->hidden_ssid_info = enable ? 0 : 2;
 
 	if (mwl_hif_exec_cmd(hw, HOSTCMD_CMD_BROADCAST_SSID_ENABLE)) {
 		mutex_unlock(&priv->fwcmd_mutex);
@@ -2487,6 +2492,7 @@ int mwl_fwcmd_set_switch_channel(struct ieee80211_hw *hw,
 	pcmd->init_count = cpu_to_le32(ch_switch->count + 1);
 	pcmd->chnl_flags = cpu_to_le32(chnl_flags);
 	pcmd->next_ht_extchnl_offset = cpu_to_le32(sec_chnl_offset);
+	pcmd->dfs_test_mode = cpu_to_le32(priv->dfs_test);
 
 	if (mwl_hif_exec_cmd(hw, HOSTCMD_CMD_SET_SWITCH_CHANNEL)) {
 		mutex_unlock(&priv->fwcmd_mutex);
@@ -3254,6 +3260,45 @@ int mwl_fwcmd_get_temp(struct ieee80211_hw *hw, u32 *temp)
 	return 0;
 }
 
+int mwl_fwcmd_led_ctrl(struct ieee80211_hw *hw, u8 enable, u8 rate)
+{
+	struct hostcmd_cmd_led_ctrl  *pcmd;
+	struct mwl_priv *priv = hw->priv;
+
+	pcmd = (struct hostcmd_cmd_led_ctrl *)&priv->pcmd_buf[0];
+
+	mutex_lock(&priv->fwcmd_mutex);
+
+	memset(pcmd, 0x00, sizeof(*pcmd));
+	pcmd->cmd_hdr.cmd = cpu_to_le16(HOSTCMD_CMD_LED_CTRL);
+	pcmd->cmd_hdr.len = cpu_to_le16(sizeof(*pcmd));
+	pcmd->action = 1; /* 1: set */
+	pcmd->led_enable = enable;
+	pcmd->led_control = 1; /* 1: SW */
+
+	switch (rate) {
+	case LED_BLINK_RATE_LOW:
+	case LED_BLINK_RATE_MID:
+	case LED_BLINK_RATE_HIGH:
+		pcmd->led_blink_rate = rate;
+		break;
+	default:
+		if (enable) {
+			mutex_unlock(&priv->fwcmd_mutex);
+			return -EINVAL;
+		}
+		break;
+	}
+	if (mwl_hif_exec_cmd(hw, HOSTCMD_CMD_LED_CTRL)) {
+		mutex_unlock(&priv->fwcmd_mutex);
+		return -EIO;
+	}
+
+	mutex_unlock(&priv->fwcmd_mutex);
+
+	return 0;
+}
+
 int mwl_fwcmd_get_fw_region_code(struct ieee80211_hw *hw,
 				 u32 *fw_region_code)
 {
@@ -3524,6 +3569,9 @@ int mwl_fwcmd_get_fw_core_dump(struct ieee80211_hw *hw,
 {
 	struct mwl_priv *priv = hw->priv;
 	struct hostcmd_cmd_get_fw_core_dump *pcmd;
+
+	if (priv->chip_type != MWL8964)
+		return -EPERM;
 
 	pcmd = (struct hostcmd_cmd_get_fw_core_dump *)&priv->pcmd_buf[0];
 

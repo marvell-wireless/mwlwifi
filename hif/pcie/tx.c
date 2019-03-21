@@ -241,12 +241,12 @@ static void pcie_tx_ring_cleanup(struct mwl_priv *priv)
 				if (!desc->tx_hndl[i].psk_buff)
 					continue;
 
-				wiphy_info(priv->hw->wiphy,
-					   "unmapped and free'd %i 0x%p 0x%x\n",
-					   i,
-					   desc->tx_hndl[i].psk_buff->data,
-					   le32_to_cpu(
-					   desc->ptx_ring[i].pkt_ptr));
+				wiphy_debug(priv->hw->wiphy,
+					    "unmapped and free'd %i %p %x\n",
+					    i,
+					    desc->tx_hndl[i].psk_buff->data,
+					    le32_to_cpu(
+					    desc->ptx_ring[i].pkt_ptr));
 				pci_unmap_single(pcie_priv->pdev,
 						 le32_to_cpu(
 						 desc->ptx_ring[i].pkt_ptr),
@@ -405,6 +405,11 @@ static inline void pcie_tx_skb(struct mwl_priv *priv, int desc_num,
 	}
 	wh = &dma_data->wh;
 
+	if (ieee80211_is_probe_resp(wh->frame_control) &&
+	    priv->dump_probe)
+		wiphy_info(priv->hw->wiphy,
+			  "Probe Resp: %pM\n", wh->addr1);
+
 	if (ieee80211_is_data(wh->frame_control) ||
 	    (ieee80211_is_mgmt(wh->frame_control) &&
 	    ieee80211_has_protected(wh->frame_control) &&
@@ -545,7 +550,8 @@ struct sk_buff *pcie_tx_do_amsdu(struct mwl_priv *priv,
 	spin_lock_bh(&sta_info->amsdu_lock);
 	amsdu = &sta_info->amsdu_ctrl.frag[desc_num];
 
-	if (tx_skb->len > SYSADPT_AMSDU_ALLOW_SIZE) {
+	if ((tx_skb->len > SYSADPT_AMSDU_ALLOW_SIZE) ||
+	    utils_is_non_amsdu_packet(tx_skb->data, true)) {
 		if (amsdu->num) {
 			pcie_tx_skb(priv, desc_num, amsdu->skb);
 			amsdu->num = 0;
@@ -954,14 +960,14 @@ void pcie_tx_skbs(unsigned long data)
 				break;
 
 			tx_skb = skb_dequeue(&pcie_priv->txq[num]);
+			if (!tx_skb)
+				continue;
 			tx_info = IEEE80211_SKB_CB(tx_skb);
 			tx_ctrl = (struct pcie_tx_ctrl *)&tx_info->status;
 
-			if ((tx_skb->protocol != cpu_to_be16(ETH_P_PAE)) &&
-			    (tx_ctrl->tx_priority >= SYSADPT_TX_WMM_QUEUES)) {
+			if (tx_ctrl->tx_priority >= SYSADPT_TX_WMM_QUEUES)
 				tx_skb = pcie_tx_do_amsdu(priv, num,
 							  tx_skb, tx_info);
-			}
 
 			if (tx_skb) {
 				if (pcie_tx_available(priv, num))
@@ -1053,29 +1059,43 @@ void pcie_tx_xmit(struct ieee80211_hw *hw,
 	bool eapol_frame = false;
 	struct pcie_tx_ctrl *tx_ctrl;
 	struct ieee80211_key_conf *k_conf = NULL;
+	int rc;
 
 	index = skb_get_queue_mapping(skb);
 	sta = control->sta;
 
 	wh = (struct ieee80211_hdr *)skb->data;
+	tx_info = IEEE80211_SKB_CB(skb);
+	mwl_vif = mwl_dev_get_vif(tx_info->control.vif);
 
 	if (ieee80211_is_data_qos(wh->frame_control))
 		qos = le16_to_cpu(*((__le16 *)ieee80211_get_qos_ctl(wh)));
 	else
 		qos = 0;
 
-	if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
-		index = IEEE80211_AC_VO;
-		eapol_frame = true;
-	}
-
 	if (ieee80211_is_mgmt(wh->frame_control)) {
 		mgmtframe = true;
 		mgmt = (struct ieee80211_mgmt *)skb->data;
-	}
+	} else {
+		u16 pkt_type;
+		struct mwl_sta *sta_info;
 
-	tx_info = IEEE80211_SKB_CB(skb);
-	mwl_vif = mwl_dev_get_vif(tx_info->control.vif);
+		pkt_type = be16_to_cpu(*((__be16 *)
+			&skb->data[ieee80211_hdrlen(wh->frame_control) + 6]));
+		if (pkt_type == ETH_P_PAE) {
+			index = IEEE80211_AC_VO;
+			eapol_frame = true;
+		}
+		if (sta) {
+			if (mwl_vif->is_hw_crypto_enabled) {
+				sta_info = mwl_dev_get_sta(sta);
+				if (!sta_info->is_key_set && !eapol_frame) {
+					dev_kfree_skb_any(skb);
+					return;
+				}
+			}
+		}
+	}
 
 	if (tx_info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ) {
 		wh->seq_ctrl &= cpu_to_le16(IEEE80211_SCTL_FRAG);
@@ -1227,8 +1247,12 @@ void pcie_tx_xmit(struct ieee80211_hw *hw,
 	/* Initiate the ampdu session here */
 	if (start_ba_session) {
 		spin_lock_bh(&priv->stream_lock);
-		if (mwl_fwcmd_start_stream(hw, stream))
+		rc = mwl_fwcmd_start_stream(hw, stream);
+		if (rc)
 			mwl_fwcmd_remove_stream(hw, stream);
+		else
+			wiphy_debug(hw->wiphy, "Mac80211 start BA %pM\n",
+				    stream->sta->addr);
 		spin_unlock_bh(&priv->stream_lock);
 	}
 }
@@ -1243,9 +1267,10 @@ void pcie_tx_del_pkts_via_vif(struct ieee80211_hw *hw,
 	struct ieee80211_tx_info *tx_info;
 	struct pcie_tx_ctrl *tx_ctrl;
 	struct sk_buff_head *amsdu_pkts;
+	unsigned long flags;
 
 	for (num = 1; num < PCIE_NUM_OF_DESC_DATA; num++) {
-		spin_lock_bh(&pcie_priv->txq[num].lock);
+		spin_lock_irqsave(&pcie_priv->txq[num].lock, flags);
 		skb_queue_walk_safe(&pcie_priv->txq[num], skb, tmp) {
 			tx_info = IEEE80211_SKB_CB(skb);
 			tx_ctrl = (struct pcie_tx_ctrl *)&tx_info->status;
@@ -1260,7 +1285,7 @@ void pcie_tx_del_pkts_via_vif(struct ieee80211_hw *hw,
 				dev_kfree_skb_any(skb);
 			}
 		}
-		spin_unlock_bh(&pcie_priv->txq[num].lock);
+		spin_unlock_irqrestore(&pcie_priv->txq[num].lock, flags);
 	}
 }
 
@@ -1274,9 +1299,10 @@ void pcie_tx_del_pkts_via_sta(struct ieee80211_hw *hw,
 	struct ieee80211_tx_info *tx_info;
 	struct pcie_tx_ctrl *tx_ctrl;
 	struct sk_buff_head *amsdu_pkts;
+	unsigned long flags;
 
 	for (num = 1; num < PCIE_NUM_OF_DESC_DATA; num++) {
-		spin_lock_bh(&pcie_priv->txq[num].lock);
+		spin_lock_irqsave(&pcie_priv->txq[num].lock, flags);
 		skb_queue_walk_safe(&pcie_priv->txq[num], skb, tmp) {
 			tx_info = IEEE80211_SKB_CB(skb);
 			tx_ctrl = (struct pcie_tx_ctrl *)&tx_info->status;
@@ -1291,7 +1317,7 @@ void pcie_tx_del_pkts_via_sta(struct ieee80211_hw *hw,
 				dev_kfree_skb_any(skb);
 			}
 		}
-		spin_unlock_bh(&pcie_priv->txq[num].lock);
+		spin_unlock_irqrestore(&pcie_priv->txq[num].lock, flags);
 	}
 }
 
@@ -1307,10 +1333,11 @@ void pcie_tx_del_ampdu_pkts(struct ieee80211_hw *hw,
 	struct ieee80211_tx_info *tx_info;
 	struct pcie_tx_ctrl *tx_ctrl;
 	struct sk_buff_head *amsdu_pkts;
+	unsigned long flags;
 
 	ac = utils_tid_to_ac(tid);
 	desc_num = SYSADPT_TX_WMM_QUEUES - ac - 1;
-	spin_lock_bh(&pcie_priv->txq[desc_num].lock);
+	spin_lock_irqsave(&pcie_priv->txq[desc_num].lock, flags);
 	skb_queue_walk_safe(&pcie_priv->txq[desc_num], skb, tmp) {
 		tx_info = IEEE80211_SKB_CB(skb);
 		tx_ctrl = (struct pcie_tx_ctrl *)&tx_info->status;
@@ -1325,7 +1352,7 @@ void pcie_tx_del_ampdu_pkts(struct ieee80211_hw *hw,
 			dev_kfree_skb_any(skb);
 		}
 	}
-	spin_unlock_bh(&pcie_priv->txq[desc_num].lock);
+	spin_unlock_irqrestore(&pcie_priv->txq[desc_num].lock, flags);
 
 	spin_lock_bh(&sta_info->amsdu_lock);
 	amsdu_frag = &sta_info->amsdu_ctrl.frag[desc_num];

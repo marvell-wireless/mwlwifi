@@ -161,11 +161,12 @@ static void pcie_rx_ring_cleanup(struct mwl_priv *priv)
 
 			dev_kfree_skb_any(rx_hndl->psk_buff);
 
-			wiphy_info(priv->hw->wiphy,
-				   "unmapped+free'd %i 0x%p 0x%x %i\n",
-				   i, rx_hndl->psk_buff->data,
-				   le32_to_cpu(rx_hndl->pdesc->pphys_buff_data),
-				   desc->rx_buf_size);
+			wiphy_debug(priv->hw->wiphy,
+				    "unmapped+free'd %i 0x%p 0x%x %i\n",
+				    i, rx_hndl->psk_buff->data,
+				    le32_to_cpu(
+				    rx_hndl->pdesc->pphys_buff_data),
+				    desc->rx_buf_size);
 
 			rx_hndl->psk_buff = NULL;
 		}
@@ -202,7 +203,11 @@ static inline void pcie_rx_status(struct mwl_priv *priv,
 	u16 rx_rate;
 
 	memset(status, 0, sizeof(*status));
-	status->signal = -(pdesc->rssi + W836X_RSSI_OFFSET);
+
+	if (priv->chip_type == MWL8997)
+		status->signal = (s8)pdesc->rssi;
+	else
+		status->signal = -(pdesc->rssi + W836X_RSSI_OFFSET);
 
 	rx_rate = le16_to_cpu(pdesc->rate);
 	pcie_rx_prepare_status(priv,
@@ -425,7 +430,12 @@ void pcie_rx_recv(unsigned long data)
 		status = IEEE80211_SKB_RXCB(prx_skb);
 		pcie_rx_status(priv, curr_hndl->pdesc, status);
 
-		priv->noise = -curr_hndl->pdesc->noise_floor;
+		if (priv->chip_type == MWL8997) {
+			priv->noise = (s8)curr_hndl->pdesc->noise_floor;
+			if (priv->noise > 0)
+				priv->noise = -priv->noise;
+		} else
+			priv->noise = -curr_hndl->pdesc->noise_floor;
 
 		wh = &((struct pcie_dma_data *)prx_skb->data)->wh;
 
@@ -510,6 +520,10 @@ void pcie_rx_recv(unsigned long data)
 							      status))
 					goto out;
 		}
+
+		if (ieee80211_is_probe_req(wh->frame_control) &&
+		    priv->dump_probe)
+			wiphy_info(hw->wiphy, "Probe Req: %pM\n", wh->addr2);
 
 		ieee80211_rx(hw, prx_skb);
 out:

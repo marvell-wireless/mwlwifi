@@ -264,7 +264,7 @@ static void mwl_reg_notifier(struct wiphy *wiphy,
 	int i, j, k;
 #endif
 
-	hw = (struct ieee80211_hw *)wiphy_priv(wiphy);
+	hw = wiphy_to_ieee80211_hw(wiphy);
 	priv = hw->priv;
 
 	if (priv->forbidden_setting) {
@@ -578,6 +578,16 @@ static void mwl_set_caps(struct mwl_priv *priv)
 	}
 }
 
+static void mwl_heartbeat_handle(struct work_struct *work)
+{
+	struct mwl_priv *priv =
+		container_of(work, struct mwl_priv, heartbeat_handle);
+	u32 val;
+
+	mwl_fwcmd_get_addr_value(priv->hw, 0, 1, &val, 0);
+	priv->heartbeating = false;
+}
+
 static void mwl_watchdog_ba_events(struct work_struct *work)
 {
 	int rc;
@@ -699,10 +709,28 @@ static irqreturn_t mwl_isr(int irq, void *dev_id)
 	return mwl_hif_irq_handler(hw);
 }
 
+#ifdef timer_setup
+static void timer_routine(struct timer_list *t)
+{
+	struct mwl_priv *priv = from_timer(priv, t, period_timer);
+	struct ieee80211_hw *hw = priv->hw;
+#else
 static void timer_routine(unsigned long data)
 {
 	struct ieee80211_hw *hw = (struct ieee80211_hw *)data;
 	struct mwl_priv *priv = hw->priv;
+#endif
+	if (priv->heartbeat) {
+		if ((jiffies - priv->pre_jiffies) >=
+		    msecs_to_jiffies(priv->heartbeat * 1000)) {
+			if (!priv->heartbeating) {
+				priv->heartbeating = true;
+				ieee80211_queue_work(hw,
+						     &priv->heartbeat_handle);
+			}
+			priv->pre_jiffies = jiffies;
+		}
+	}
 
 	mwl_hif_timer_routine(hw);
 
@@ -736,6 +764,7 @@ static int mwl_wl_init(struct mwl_priv *priv)
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 	hw->wiphy->flags |= WIPHY_FLAG_HAS_CHANNEL_SWITCH;
 	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
+	hw->wiphy->flags |= WIPHY_FLAG_AP_UAPSD;
 
 	hw->vif_data_size = sizeof(struct mwl_vif);
 	hw->sta_data_size = sizeof(struct mwl_sta);
@@ -757,6 +786,7 @@ static int mwl_wl_init(struct mwl_priv *priv)
 		priv->pwr_level = SYSADPT_TX_GRP_PWR_LEVEL_TOTAL;
 	else
 		priv->pwr_level = SYSADPT_TX_POWER_LEVEL_TOTAL;
+	priv->dfs_test = false;
 	priv->csa_active = false;
 	priv->dfs_chirp_count_min = 5;
 	priv->dfs_chirp_time_interval = 1000;
@@ -766,6 +796,7 @@ static int mwl_wl_init(struct mwl_priv *priv)
 	priv->bf_type = TXBF_MODE_AUTO;
 
 	/* Handle watchdog ba events */
+	INIT_WORK(&priv->heartbeat_handle, mwl_heartbeat_handle);
 	INIT_WORK(&priv->watchdog_ba_handle, mwl_watchdog_ba_events);
 	INIT_WORK(&priv->account_handle, mwl_account_handle);
 	INIT_WORK(&priv->wds_check_handle, mwl_wds_check_handle);
@@ -857,6 +888,10 @@ static int mwl_wl_init(struct mwl_priv *priv)
 
 	mwl_set_caps(priv);
 
+	priv->led_blink_enable = 1;
+	priv->led_blink_rate = LED_BLINK_RATE_MID;
+	mwl_fwcmd_led_ctrl(hw, priv->led_blink_enable, priv->led_blink_rate);
+
 	vendor_cmd_register(hw->wiphy);
 
 	rc = ieee80211_register_hw(hw);
@@ -873,8 +908,11 @@ static int mwl_wl_init(struct mwl_priv *priv)
 		wiphy_err(hw->wiphy, "fail to register IRQ handler\n");
 		goto err_register_irq;
 	}
-
+#ifdef timer_setup
+	timer_setup(&priv->period_timer, timer_routine, 0);
+#else
 	setup_timer(&priv->period_timer, timer_routine, (unsigned long)hw);
+#endif
 	mod_timer(&priv->period_timer, jiffies +
 		  msecs_to_jiffies(SYSADPT_TIMER_WAKEUP_TIME));
 
@@ -911,6 +949,7 @@ static void mwl_wl_deinit(struct mwl_priv *priv)
 	cancel_work_sync(&priv->account_handle);
 	cancel_work_sync(&priv->wds_check_handle);
 	cancel_work_sync(&priv->watchdog_ba_handle);
+	cancel_work_sync(&priv->heartbeat_handle);
 	mwl_hif_deinit(hw);
 }
 
@@ -939,6 +978,8 @@ struct ieee80211_hw *mwl_alloc_hw(int bus_type,
 	priv->fw_device_pwrtbl = false;
 	priv->forbidden_setting = false;
 	priv->regulatory_set = false;
+	priv->use_short_slot = false;
+	priv->use_short_preamble = false;
 	priv->disable_2g = false;
 	priv->disable_5g = false;
 	priv->tx_amsdu = true;
@@ -1037,9 +1078,9 @@ int mwl_init_hw(struct ieee80211_hw *hw, const char *fw_name,
 
 void mwl_deinit_hw(struct ieee80211_hw *hw)
 {
-	mwl_wl_deinit(hw->priv);
-
 #ifdef CONFIG_DEBUG_FS
 	mwl_debugfs_remove(hw);
 #endif
+
+	mwl_wl_deinit(hw->priv);
 }

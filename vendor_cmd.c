@@ -17,6 +17,7 @@
 
 #include <net/mac80211.h>
 #include <net/netlink.h>
+#include <linux/version.h>
 
 #include "sysadpt.h"
 #include "core.h"
@@ -42,7 +43,11 @@ static int mwl_vendor_cmd_set_bf_type(struct wiphy *wiphy,
 		return -EPERM;
 
 	rc = nla_parse(tb, MWL_VENDOR_ATTR_MAX, data, data_len,
-		       mwl_vendor_attr_policy, NULL);
+		       mwl_vendor_attr_policy
+#if (defined(LINUX_BACKPORT) || (LINUX_VERSION_CODE >=KERNEL_VERSION(4,12,0)))
+               , NULL
+#endif
+               );
 	if (rc)
 		return rc;
 
@@ -97,6 +102,18 @@ static const struct wiphy_vendor_command mwl_vendor_commands[] = {
 };
 
 static const struct nl80211_vendor_cmd_info mwl_vendor_events[] = {
+	{
+		.vendor_id = MRVL_OUI,
+		.subcmd =  MWL_VENDOR_EVENT_DRIVER_READY,
+	},
+	{
+		.vendor_id = MRVL_OUI,
+		.subcmd =  MWL_VENDOR_EVENT_DRIVER_START_REMOVE,
+	},
+	{
+		.vendor_id = MRVL_OUI,
+		.subcmd =  MWL_VENDOR_EVENT_CMD_TIMEOUT,
+	}
 };
 
 void vendor_cmd_register(struct wiphy *wiphy)
@@ -105,4 +122,15 @@ void vendor_cmd_register(struct wiphy *wiphy)
 	wiphy->n_vendor_commands = ARRAY_SIZE(mwl_vendor_commands);
 	wiphy->vendor_events = mwl_vendor_events;
 	wiphy->n_vendor_events = ARRAY_SIZE(mwl_vendor_events);
+}
+
+void vendor_cmd_basic_event(struct wiphy *wiphy, int event_idx)
+{
+	struct sk_buff *skb;
+
+	skb = cfg80211_vendor_event_alloc(wiphy, NULL, 0,
+					  event_idx, GFP_KERNEL);
+
+	if (skb)
+		cfg80211_vendor_event(skb, GFP_KERNEL);
 }

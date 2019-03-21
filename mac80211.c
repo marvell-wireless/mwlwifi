@@ -214,6 +214,9 @@ static int mwl_mac80211_add_interface(struct ieee80211_hw *hw,
 	mwl_vif->seqno = 0;
 	mwl_vif->is_hw_crypto_enabled = false;
 	mwl_vif->beacon_info.valid = false;
+	mwl_vif->set_beacon = false;
+	mwl_vif->basic_rate_idx = 0;
+	mwl_vif->broadcast_ssid = 0xFF;
 	mwl_vif->iv16 = 1;
 	mwl_vif->iv32 = 0;
 	mwl_vif->keyidx = 0;
@@ -355,12 +358,23 @@ static void mwl_mac80211_bss_info_changed_sta(struct ieee80211_hw *hw,
 {
 	struct mwl_priv *priv = hw->priv;
 
-	if ((changed & BSS_CHANGED_ERP_SLOT) && (priv->chip_type == MWL8997))
-		mwl_fwcmd_set_slot_time(hw, vif->bss_conf.use_short_slot);
+	if ((changed & BSS_CHANGED_ERP_SLOT) && (priv->chip_type == MWL8997)) {
+		if (priv->use_short_slot != vif->bss_conf.use_short_slot) {
+			mwl_fwcmd_set_slot_time(hw,
+						vif->bss_conf.use_short_slot);
+			priv->use_short_slot = vif->bss_conf.use_short_slot;
+		}
+	}
 
-	if (changed & BSS_CHANGED_ERP_PREAMBLE)
-		mwl_fwcmd_set_radio_preamble(hw,
-					     vif->bss_conf.use_short_preamble);
+	if (changed & BSS_CHANGED_ERP_PREAMBLE) {
+		if (priv->use_short_preamble !=
+		    vif->bss_conf.use_short_preamble) {
+			mwl_fwcmd_set_radio_preamble(
+				hw, vif->bss_conf.use_short_preamble);
+			priv->use_short_preamble =
+				vif->bss_conf.use_short_preamble;
+		}
+	}
 
 	if ((changed & BSS_CHANGED_ASSOC) && vif->bss_conf.assoc)
 		mwl_fwcmd_set_aid(hw, vif, (u8 *)vif->bss_conf.bssid,
@@ -373,13 +387,27 @@ static void mwl_mac80211_bss_info_changed_ap(struct ieee80211_hw *hw,
 					     u32 changed)
 {
 	struct mwl_priv *priv = hw->priv;
+	struct mwl_vif *mwl_vif;
 
-	if ((changed & BSS_CHANGED_ERP_SLOT) && (priv->chip_type == MWL8997))
-		mwl_fwcmd_set_slot_time(hw, vif->bss_conf.use_short_slot);
+	mwl_vif = mwl_dev_get_vif(vif);
 
-	if (changed & BSS_CHANGED_ERP_PREAMBLE)
-		mwl_fwcmd_set_radio_preamble(hw,
-					     vif->bss_conf.use_short_preamble);
+	if ((changed & BSS_CHANGED_ERP_SLOT) && (priv->chip_type == MWL8997)) {
+		if (priv->use_short_slot != vif->bss_conf.use_short_slot) {
+			mwl_fwcmd_set_slot_time(hw,
+						vif->bss_conf.use_short_slot);
+			priv->use_short_slot = vif->bss_conf.use_short_slot;
+		}
+	}
+
+	if (changed & BSS_CHANGED_ERP_PREAMBLE) {
+		if (priv->use_short_preamble !=
+		    vif->bss_conf.use_short_preamble) {
+			mwl_fwcmd_set_radio_preamble(
+				hw, vif->bss_conf.use_short_preamble);
+			priv->use_short_preamble =
+				vif->bss_conf.use_short_preamble;
+		}
+	}
 
 	if (changed & BSS_CHANGED_BASIC_RATES) {
 		int idx;
@@ -392,18 +420,20 @@ static void mwl_mac80211_bss_info_changed_ap(struct ieee80211_hw *hw,
 		idx = ffs(vif->bss_conf.basic_rates);
 		if (idx)
 			idx--;
+		if (mwl_vif->basic_rate_idx != idx) {
+			if (hw->conf.chandef.chan->band == NL80211_BAND_2GHZ) {
+				mgmt_rate = mwl_rates_24[idx].hw_value;
+				/* multicast rate: 54Mbps */
+				mcast_rate = mwl_rates_24[sizeof(mwl_rates_24)/sizeof(struct ieee80211_rate) - 1].hw_value;
+			} else {
+				mgmt_rate = mwl_rates_50[idx].hw_value;
+				/* multicast rate: 54Mbps */
+				mcast_rate = mwl_rates_50[sizeof(mwl_rates_50)/sizeof(struct ieee80211_rate) - 1].hw_value;
+			}
 
-		if (hw->conf.chandef.chan->band == NL80211_BAND_2GHZ) {
-			mgmt_rate = mwl_rates_24[idx].hw_value;
-			/* multicast rate: 54Mbps */
-			mcast_rate = mwl_rates_24[sizeof(mwl_rates_24)/sizeof(struct ieee80211_rate) - 1].hw_value;
-		} else {
-			mgmt_rate = mwl_rates_50[idx].hw_value;
-			/* multicast rate: 54Mbps */
-			mcast_rate = mwl_rates_50[sizeof(mwl_rates_50)/sizeof(struct ieee80211_rate) - 1].hw_value;
+			mwl_fwcmd_use_fixed_rate(hw, mcast_rate, mgmt_rate);
+			mwl_vif->basic_rate_idx = idx;
 		}
-
-		mwl_fwcmd_use_fixed_rate(hw, mcast_rate, mgmt_rate);
 	}
 
 	if (changed & (BSS_CHANGED_BEACON_INT | BSS_CHANGED_BEACON)) {
@@ -411,16 +441,26 @@ static void mwl_mac80211_bss_info_changed_ap(struct ieee80211_hw *hw,
 
 		if ((info->ssid[0] != '\0') &&
 		    (info->ssid_len != 0) &&
-		    (!info->hidden_ssid))
-			mwl_fwcmd_broadcast_ssid_enable(hw, vif, true);
-		else
-			mwl_fwcmd_broadcast_ssid_enable(hw, vif, false);
+		    (!info->hidden_ssid)) {
+			if (mwl_vif->broadcast_ssid != true) {
+				mwl_fwcmd_broadcast_ssid_enable(hw, vif, true);
+				mwl_vif->broadcast_ssid = true;
+			}
+		} else {
+			if (mwl_vif->broadcast_ssid != false) {
+				mwl_fwcmd_broadcast_ssid_enable(hw, vif, false);
+				mwl_vif->broadcast_ssid = false;
+			}
+		}
 
-		skb = ieee80211_beacon_get(hw, vif);
+		if (!mwl_vif->set_beacon) {
+			skb = ieee80211_beacon_get(hw, vif);
 
-		if (skb) {
-			mwl_fwcmd_set_beacon(hw, vif, skb->data, skb->len);
-			dev_kfree_skb_any(skb);
+			if (skb) {
+				mwl_fwcmd_set_beacon(hw, vif, skb->data, skb->len);
+				dev_kfree_skb_any(skb);
+			}
+			mwl_vif->set_beacon = true;
 		}
 	}
 
@@ -464,6 +504,7 @@ static int mwl_mac80211_set_key(struct ieee80211_hw *hw,
 				struct ieee80211_key_conf *key)
 {
 	struct mwl_vif *mwl_vif;
+	struct mwl_sta *sta_info;
 	int rc = 0;
 	u8 encr_type;
 	u8 *addr;
@@ -496,6 +537,10 @@ static int mwl_mac80211_set_key(struct ieee80211_hw *hw,
 			goto out;
 
 		mwl_vif->is_hw_crypto_enabled = true;
+		if (sta) {
+			sta_info = mwl_dev_get_sta(sta);
+			sta_info->is_key_set = true;
+		}
 	} else {
 		rc = mwl_fwcmd_encryption_remove_key(hw, vif, addr, key);
 		if (rc)

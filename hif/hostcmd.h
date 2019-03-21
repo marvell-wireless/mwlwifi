@@ -68,6 +68,7 @@
 #define HOSTCMD_CMD_SET_BFTYPE                  0x1155
 #define HOSTCMD_CMD_CAU_REG_ACCESS              0x1157
 #define HOSTCMD_CMD_GET_TEMP                    0x1159
+#define HOSTCMD_CMD_LED_CTRL                    0x1169
 #define HOSTCMD_CMD_GET_FW_REGION_CODE          0x116A
 #define HOSTCMD_CMD_GET_DEVICE_PWR_TBL          0x116B
 #define HOSTCMD_CMD_SET_RATE_DROP               0x1172
@@ -76,8 +77,8 @@
 #define HOSTCMD_CMD_GET_DEVICE_PWR_TBL_SC4      0x118B
 #define HOSTCMD_CMD_QUIET_MODE                  0x1201
 #define HOSTCMD_CMD_CORE_DUMP_DIAG_MODE         0x1202
-#define HOSTCMD_CMD_GET_FW_CORE_DUMP            0x1203
 #define HOSTCMD_CMD_802_11_SLOT_TIME            0x1203
+#define HOSTCMD_CMD_GET_FW_CORE_DUMP            0x1203
 #define HOSTCMD_CMD_EDMAC_CTRL                  0x1204
 #define HOSTCMD_CMD_TXPWRLMT_CFG                0x1211
 #define HOSTCMD_CMD_MCAST_CTS                   0x4001
@@ -400,6 +401,7 @@ struct hostcmd_cmd_802_11_rf_antenna {
 struct hostcmd_cmd_broadcast_ssid_enable {
 	struct hostcmd_header cmd_hdr;
 	__le32 enable;
+	__le32 hidden_ssid_info;
 } __packed;
 
 /* HOSTCMD_CMD_SET_CFG */
@@ -664,6 +666,7 @@ struct wmm_param_elem {
 	u8 type;
 	u8 sub_type;
 	u8 version;
+	u8 qos_info;
 	u8 rsvd;
 	struct ac_param_rcd ac_be;
 	struct ac_param_rcd ac_bk;
@@ -701,6 +704,8 @@ struct start_cmd {
 	struct wmm_param_elem wmm_param;
 	struct country country;
 	__le32 ap_rf_type;           /* 0->B, 1->G, 2->Mixed, 3->A, 4->11J */
+	u8 rsvd[3];
+	u8 bssid[ETH_ALEN];          /* only for 88W8997                   */
 } __packed;
 
 struct hostcmd_cmd_ap_beacon {
@@ -1052,6 +1057,16 @@ struct hostcmd_cmd_get_temp {
 	struct hostcmd_header cmd_hdr;
 	__le32 celcius;
 	__le32 raw_data;
+} __packed;
+
+/* HOSTCMD_CMD_LED_CTRL */
+struct hostcmd_cmd_led_ctrl {
+	struct hostcmd_header cmd_hdr;
+	__le16 action;     /* 0: GET, 1: SET (only SET is supported) */
+	u8 led_enable;     /* 0: Disable, 1: Enable                  */
+	u8 led_control;    /* 0: HW 1: SW (only SW is supported)     */
+	u8 led_blink_rate; /* 1: Slow, 2: Medium, 3: Fast blink      */
+	u8 reserved;
 } __packed;
 
 /* HOSTCMD_CMD_GET_FW_REGION_CODE */

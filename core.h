@@ -144,6 +144,12 @@ enum {
 	AMPDU_STREAM_ACTIVE,
 };
 
+enum {
+	LED_BLINK_RATE_LOW = 0x1,
+	LED_BLINK_RATE_MID,
+	LED_BLINK_RATE_HIGH,
+};
+
 struct mwl_chip_info {
 	const char *part_name;
 	const char *fw_image;
@@ -214,6 +220,9 @@ struct mwl_priv {
 	struct mwl_device_pwr_tbl device_pwr_tbl[SYSADPT_MAX_NUM_CHANNELS];
 	int chip_type;
 
+	bool use_short_slot;
+	bool use_short_preamble;
+
 	struct {
 		enum mwl_bus bus;
 		const struct mwl_hif_ops *ops;
@@ -227,6 +236,8 @@ struct mwl_priv {
 	int antenna_tx;
 	int antenna_rx;
 	bool tx_amsdu;
+	bool dump_hostcmd;
+	bool dump_probe;
 
 	struct mwl_tx_pwr_tbl tx_pwr_tbl[SYSADPT_MAX_NUM_CHANNELS];
 	bool cdd;
@@ -240,6 +251,12 @@ struct mwl_priv {
 	unsigned short *pcmd_buf;    /* pointer to CmdBuf (virtual)  */
 	dma_addr_t pphys_cmd_buf;    /* pointer to CmdBuf (physical) */
 	bool in_send_cmd;
+	bool cmd_timeout;
+	bool rmmod;
+	int heartbeat;
+	u32 pre_jiffies;
+	bool heartbeating;
+	struct work_struct heartbeat_handle;
 
 	int irq;
 	struct mwl_hw_data hw_data;  /* Adapter HW specific info     */
@@ -304,6 +321,7 @@ struct mwl_priv {
 	struct work_struct wds_check_handle;
 	u8 wds_check_sta[ETH_ALEN];
 
+	bool dfs_test;
 	bool csa_active;
 	struct work_struct chnl_switch_handle;
 	enum nl80211_dfs_regions dfs_region;
@@ -319,6 +337,9 @@ struct mwl_priv {
 	u32 throttle_state;
 	u32 quiet_period;
 	int temperature;
+
+	u8 led_blink_enable;
+	u8 led_blink_rate;
 
 	struct dentry *debugfs_phy;
 	u32 reg_type;
@@ -378,6 +399,9 @@ struct mwl_vif {
 	bool is_hw_crypto_enabled;
 	/* Indicate if this is station mode */
 	struct beacon_info beacon_info;
+	bool set_beacon;
+	int basic_rate_idx;
+	u8 broadcast_ssid;
 	u16 iv16;
 	u32 iv32;
 	s8 keyidx;
@@ -446,6 +470,7 @@ struct mwl_sta {
 	u32 check_ba_failed[MWL_MAX_TID];
 	struct mwl_tx_ba_hist ba_hist;
 	bool is_amsdu_allowed;
+	bool is_key_set;
 	/* for amsdu aggregation */
 	struct {
 		spinlock_t amsdu_lock;   /* for amsdu */
